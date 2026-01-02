@@ -1,4 +1,4 @@
-# config_example.py
+git # config_example.py
 TOKEN = "ВСТАВЬ_СЮДА_ТОКЕН"
 CHANNEL_ID = "@твоя_группа"
 

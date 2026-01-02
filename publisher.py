@@ -1,120 +1,125 @@
-# publisher.py
 import os
 import json
 import requests
 import config
-import video_creator # Использует MoviePy 2.2.1
+import video_creator
 import time
+import math
 
-# --- БЛОК УПРАВЛЕНИЯ МАГАЗИНАМИ ---
-# Индексы: 0-albert, 1-tesco, 2-penny, 3-lidl, 4-billa, 5-kaufland, 6-hrushka
+# Список всех магазинов
 ALL_STORES = ["albert", "tesco", "penny", "lidl", "billa", "kaufland", "hruska"]
-
-
-CURRENT_STORES = [ALL_STORES[0]] 
+CURRENT_STORES = [ALL_STORES[1]] # Сейчас только Albert
 
 def get_local_caption(store_name, category_name):
-    """Локальные шаблоны с учетом твоих новых категорий"""
+    """
+    Полный список шаблонов для всех категорий из твоего списка
+    """
+    store_up = store_name.upper()
+    
     templates = {
-        "snacky": f"🥨 хрустяшки в {store_name.upper()}! 🍿",
-        "kava_caj": f"☕ кофе и чай в {store_name.upper()}! бодрые скидки. 🍵",
-        "alkohol": f"🔥 отличные цены на алкоголь в {store_name.upper()}! 🥂",
-        "cistidla": f"🧼 чистота с {store_name.upper()}! бытовая химия дешевле.",
-        "general": f"🛒 крутые скидки в {store_name.upper()}! забирай скорее.",
-        "info": f"ℹ️ инфо от {store_name.upper()}.",
-        "klobasa_sunka_salam_parky": f"🌭 колбасы и сосиски в {store_name.upper()}!",
-        "maso": f"🥩 свежее мясо в {store_name.upper()}! отличный выбор.",
-        "nadobi": f"🍳 посуда в {store_name.upper()}! обновляем кухню.",
-        "ovoce_a_zelenina": f"🍎 фрукты и овощи в {store_name.upper()}! свежий завоз.",
-        "pecivo": f"🥐 свежая выпечка в {store_name.upper()}! рогалики по акции.",
-        "syry": f"🧀 сыры по акции в {store_name.upper()}! пробуем новое.",
-        "svacina": f"🍱 открыл, намазал в {store_name.upper()}!"
+        "alkohol": f"🍷 отличные цены на алкоголь в {store_up}!",
+        "snacky": f"🥨 вкусные перекусы и снеки в {store_up}!",
+        "syry": f"🧀 сырная лавка в {store_up}: выбирай лучшее!",
+        "maso": f"🥩 свежее мясо в {store_up}! отличный выбор для обеда.",
+        "klobasa_sunka_salam_parky": f"🥓 колбасы и мясные деликатесы в {store_up}!",
+        "ovoce_a_zelenina": f"🍎 витамины в {store_up}: свежие овощи и фрукты!",
+        "pecivo": f"🥐 ароматная выпечка в {store_up}! свежесть каждый день.",
+        "cistidla": f"🧼 чистота в доме с {store_up}: средства для уборки!",
+        "nadobi": f"🍽️ товары для кухни и посуда в {store_up}!",
+        "kava_caj": f"☕️ бодрящий кофе и чай в {store_up}!",
+        "info": f"📢 важная информация и новости магазина {store_up}!",
+        "general": f"🛒 крутые скидки в {store_up}! забирай, пока не разобрали."
     }
-    base_text = templates.get(category_name, f"📍 актуальные акции в {store_name.upper()}!")
-    return f"<b>{base_text.lower()}</b>\n\n#akce #{store_name} #{category_name} #praha"
+    
+    # Если папка называется странно и её нет в списке — берем 'general'
+    base_text = templates.get(category_name, templates["general"])
+    
+    return f"<b>{base_text}</b>\n\n#{store_name} #{category_name}"
 
 def send_media_group(video_path, images, caption):
-    """
-    Универсальная отправка: 
-    Сначала пробует (Видео + Фото), если видео нет — шлет только (Фото)
-    """
+    """Универсальная отправка: Видео+Фото или просто Фото"""
     url = f"https://api.telegram.org/bot{config.TOKEN}/sendMediaGroup"
     media = []
     files = {}
 
-    # 1. Проверяем, есть ли видео
+    # Если видео есть, оно идет первым с текстом
     if video_path and os.path.exists(video_path):
-        # Если видео есть, оно будет первым в альбоме и несет текст
         media.append({'type': 'video', 'media': 'attach://video', 'caption': caption, 'parse_mode': 'HTML'})
         files['video'] = open(video_path, 'rb')
-        limit = 9 # В альбоме может быть 1 видео + 9 фото
+        limit = 9
     else:
-        # Если видео нет, текст крепим к ПЕРВОЙ фотографии
+        # Если видео нет, текст крепим к первому фото
         media.append({'type': 'photo', 'media': 'attach://photo_0', 'caption': caption, 'parse_mode': 'HTML'})
-        limit = 10 # В альбоме может быть до 10 фото
+        limit = 10
 
-    # 2. Добавляем фотографии
+    # Добавляем фото в альбом
     for i, img_path in enumerate(images[:limit]):
         file_key = f'photo_{i}'
-        # Если видео не было, первая картинка уже в media (через индекс i==0)
         if i == 0 and not (video_path and os.path.exists(video_path)):
             files[file_key] = open(img_path, 'rb')
         else:
             media.append({'type': 'photo', 'media': f'attach://{file_key}'})
             files[file_key] = open(img_path, 'rb')
     
-    payload = {'chat_id': config.CHANNEL_ID, 'media': json.dumps(media)}
-    
     try:
-        print(f"📡 Отправляю альбом (Видео: {'Да' if video_path else 'Нет'})...")
-        res = requests.post(url, data=payload, files=files, timeout=60)
+        res = requests.post(url, data={'chat_id': config.CHANNEL_ID, 'media': json.dumps(media)}, files=files, timeout=60)
         for f in files.values(): f.close()
-        
-        if res.status_code != 200:
-            print(f"❌ Ошибка TG: {res.text}")
         return res.status_code == 200
     except Exception as e:
         print(f"💥 Ошибка сети: {e}")
         return False
 
 def run_publisher():
-    """Обход папок и публикация контента в любом виде"""
+    """Обход папок с равномерным распределением картинок по постам"""
     base_dir = config.TEMP_DIR 
     post_count = 0
 
     for store in CURRENT_STORES:
         store_path = os.path.join(base_dir, store)
-        if not os.path.exists(store_path):
-            print(f"ℹ️ Папка магазина {store} пуста.")
-            continue
+        if not os.path.exists(store_path): continue
 
         for category in os.listdir(store_path):
             cat_path = os.path.join(store_path, category)
             if not os.path.isdir(cat_path): continue
 
-            # Собираем фото (от 2-х штук для альбома)
-            imgs = [os.path.join(cat_path, f) for f in os.listdir(cat_path) if f.endswith(".jpg")]
+            all_imgs = [os.path.join(cat_path, f) for f in os.listdir(cat_path) if f.endswith(".jpg")]
+            total_count = len(all_imgs)
+            
+            if total_count < 2: continue
 
-            if len(imgs) >= 2:
+            # --- ЛОГИКА РАВНОМЕРНОГО ДЕЛЕНИЯ ---
+            # 1. Считаем количество необходимых постов (макс 10 фото на пост)
+            num_posts = math.ceil(total_count / 10)
+            
+            # 2. Вычисляем среднее количество фото в одном посте
+            # Делим общее число на количество постов и округляем вверх
+            avg_size = math.ceil(total_count / num_posts)
+            
+            print(f"📦 Всего фото: {total_count}. Делю на {num_posts} поста(ов) примерно по {avg_size} шт.")
+
+            # 3. Режем список на равные части
+            chunks = []
+            for i in range(0, total_count, avg_size):
+                chunks.append(all_imgs[i : i + avg_size])
+
+            # --- ЦИКЛ ПУБЛИКАЦИИ ЧАНКОВ ---
+            for index, chunk in enumerate(chunks):
                 if post_count > 0:
-                    print(f"⏳ Ожидание 10 минут (600 сек) перед следующим постом...")
+                    print(f"⏳ Ожидание перед следующим постом...")
                     time.sleep(600)
 
-                print(f"🎬 Сборка: {store.upper()} -> {category} ({len(imgs)} фото)")
+                print(f"🎬 Пост {index + 1}/{len(chunks)}: {store.upper()} -> {category} ({len(chunk)} фото)")
                 caption = get_local_caption(store, category)
                 
-                # Пытаемся создать видео
-                v_path = video_creator.create_store_video(imgs, f"{store}_{category}")
+                v_path = video_creator.create_store_video(chunk, f"{store}_{category}_{index}")
                 
-                # ОТПРАВЛЯЕМ В ЛЮБОМ СЛУЧАЕ (с видео или без)
-                if send_media_group(v_path, imgs, caption):
-                    print(f"🚀 ПОСТ ВЫЛОЖЕН!")
-                    if v_path and os.path.exists(v_path):
-                        os.remove(v_path)
-                    for img in imgs:
-                        os.remove(img)
+                if send_media_group(v_path, chunk, caption):
+                    print(f"🚀 ПОРЦИЯ ВЫЛОЖЕНА!")
+                    if v_path and os.path.exists(v_path): os.remove(v_path)
+                    for img in chunk: os.remove(img)
                     post_count += 1
                 else:
-                    print(f"❌ Ошибка при отправке {store}/{category}")
+                    print(f"❌ Ошибка при отправке")
 
-    print(f"🏁 Работа завершена. Опубликовано постов: {post_count}")
+if __name__ == "__main__":
+    run_publisher()
